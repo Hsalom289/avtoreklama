@@ -4,6 +4,18 @@ import asyncio
 import random
 from datetime import datetime, timedelta
 import sys
+import logging
+
+# Loglarni sozlash
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Konfiguratsiya
 API_ID = 21135417
@@ -17,15 +29,29 @@ MESSAGES = [
     # Boshqa xabarlar...
 ]
 
+# Guruhlar ro'yxati
+groups = []
+processed_groups = set()  # Tarqatib bo'lingan guruhlar
+failed_groups = set()     # Tarqatib bo'lmagan guruhlar
+
+# Statistika
+stats = {
+    "messages_sent": 0,
+    "errors": 0,
+    "new_groups": 0,
+    "retry_groups": 0
+}
+
 async def get_all_groups(client):
     """Barcha guruhlarni olish"""
+    global groups
     groups = []
     async for dialog in client.iter_dialogs():
         if dialog.is_group or dialog.is_channel:
             try:
                 chat = await client.get_entity(dialog.id)
                 
-                # 1.28.0 versiyasiga mos ruxsat tekshiruvi
+                # Ruxsatlarni tekshirish
                 if isinstance(chat, InputPeerChannel):
                     can_send = chat.broadcast or (chat.megagroup and not chat.restricted)
                 else:
@@ -37,67 +63,126 @@ async def get_all_groups(client):
                         'name': dialog.name,
                         'entity': chat
                     })
-                    print(f"✅ {dialog.name} qo'shildi")
+                    logger.info(f"✅ {dialog.name} qo'shildi")
                     
             except Exception as e:
-                print(f"⚠️ {dialog.name} - Xato: {str(e)}")
+                logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}")
     return groups
 
-async def process_group(client, group):
-    """Guruhda amallar bajaring"""
+async def handle_spam_block(client):
+    """Spam blokini hal qilish"""
+    logger.info("🛑 Spam blokini bartaraf qilish...")
     try:
-        # Xabar yuborish
-        await client.send_message(group['entity'], random.choice(MESSAGES))
-        print(f"✉️ {group['name']} ga xabar yuborildi")
+        spam_bot = await client.get_entity("SpamBot")
         
-        # Postlarni ko'rish (2-10 ta)
-        post_count = random.randint(2, 3)
-        posts = await client.get_messages(group['entity'], limit=post_count)
-        for post in posts:
-            if not post.out:
-                print(f"👀 Post: {post.text[:50] if post.text else '[Media]'}")
-                
+        # 1-chi /start
+        await client.send_message(spam_bot, "/start")
+        await asyncio.sleep(5)
+        
+        # 2-chi /start
+        await client.send_message(spam_bot, "/start")
+        await asyncio.sleep(5)
+        
+        # Javobni tekshirish
+        messages = await client.get_messages(spam_bot, limit=1)
+        if messages and "CAPTCHA" in messages[0].text:
+            logger.warning("⚠️ Iltimos CAPTCHA ni qo'lda hal qiling!")
+            return False
         return True
         
-    except errors.ChatWriteForbiddenError:
-        print(f"❌ {group['name']} ga yozish taqiqlangan")
-        return False
-    except errors.FloodWaitError as e:
-        print(f"⏳ Flood kutish: {e.seconds} soniya")
-        await asyncio.sleep(e.seconds)
-        return False
     except Exception as e:
-        print(f"⚠️ {group['name']} - Xato: {str(e)}")
+        logger.error(f"SpamBot xatosi: {str(e)}")
         return False
 
-async def main_loop(client):
-    """Asosiy tsikl"""
+async def send_message(client, group):
+    """Xabar yuborish"""
+    try:
+        if group['id'] in failed_groups:
+            logger.info(f"⏩ {group['name']} guruhiga avval tarqatib bo'lmagan, o'tkazib yuborildi")
+            return False
+            
+        message = random.choice(MESSAGES)
+        await client.send_message(group['entity'], message)
+        logger.info(f"✉️ {group['name']} ga xabar yuborildi")
+        processed_groups.add(group['id'])  # Tarqatib bo'lingan guruhga qo'shish
+        stats["messages_sent"] += 1
+        return True
+    except errors.ChatWriteForbiddenError:
+        logger.warning(f"❌ {group['name']} ga yozish taqiqlangan")
+        failed_groups.add(group['id'])
+        stats["errors"] += 1
+        return False
+    except errors.FloodWaitError as e:
+        logger.warning(f"⏳ Flood kutish: {e.seconds} soniya")
+        await asyncio.sleep(e.seconds)
+        return False
+    except errors.RPCError as e:
+        if "SPAM" in str(e):
+            if await handle_spam_block(client):
+                return await send_message(client, group)
+        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}")
+        stats["errors"] += 1
+        return False
+
+async def distribute_messages(client):
+    """Xabarlarni tarqatish"""
+    global groups
     while True:
         try:
-            print(f"\n🔄 Yangi aylanish ({datetime.now().strftime('%H:%M')})")
+            logger.info(f"\n🔄 Yangi aylanish ({datetime.now().strftime('%H:%M')})")
+            
+            # SpamBotga start bosish
+            await handle_spam_block(client)
+            
+            # Guruhlarni yangilash
             groups = await get_all_groups(client)
+            if not groups:
+                logger.warning("❌ Hech qanday guruh topilmadi!")
+                await asyncio.sleep(600)
+                continue
+                
             random.shuffle(groups)
             
             for group in groups:
-                if await process_group(client, group):
-                    await asyncio.sleep(random.randint(10, 15))
+                if group['id'] not in processed_groups:
+                    stats["new_groups"] += 1
+                else:
+                    stats["retry_groups"] += 1
                     
-            print(f"⏳ Keyingi yuborish: {(datetime.now() + timedelta(hours=INTERVAL_HOURS)).strftime('%H:%M')}")
+                if await send_message(client, group):
+                    await asyncio.sleep(random.randint(10, 15))
+                
+            # Statistika
+            logger.info(f"📊 Statistika: "
+                       f"Yuborilgan xabarlar: {stats['messages_sent']}, "
+                       f"Xatolar: {stats['errors']}, "
+                       f"Yangi guruhlar: {stats['new_groups']}, "
+                       f"Qayta urinishlar: {stats['retry_groups']}")
+            
+            # Statistikani yangilash
+            stats["new_groups"] = 0
+            stats["retry_groups"] = 0
+            
+            # Dam olish
+            logger.info(f"⏳ Keyingi yuborish: {(datetime.now() + timedelta(hours=INTERVAL_HOURS)).strftime('%H:%M')}")
             await asyncio.sleep(INTERVAL_HOURS * 3600)
             
         except KeyboardInterrupt:
-            print("\n⏹ Dastur to'xtatildi!")
+            logger.info("\n⏹ Dastur to'xtatildi!")
             await client.disconnect()
             sys.exit()
+        except Exception as e:
+            logger.error(f"🔥 Xato: {str(e)}")
+            await asyncio.sleep(300)
 
 async def main():
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
     try:
         await client.start()
-        print("✅ Tizimga ulandi!")
-        await main_loop(client)
+        logger.info("✅ Tizimga ulandi!")
+        await distribute_messages(client)
     except Exception as e:
-        print(f"⚠️ Xato: {str(e)}")
+        logger.error(f"⚠️ Kirish xatosi: {str(e)}")
     finally:
         await client.disconnect()
 
