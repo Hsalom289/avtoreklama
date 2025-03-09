@@ -131,9 +131,6 @@ async def distribute_messages(client):
         try:
             logger.info(f"\n🔄 Yangi aylanish ({datetime.now().strftime('%H:%M')})")
             
-            # SpamBotga start bosish
-            await handle_spam_block(client)
-            
             # Guruhlarni yangilash
             groups = await get_all_groups(client)
             if not groups:
@@ -175,16 +172,60 @@ async def distribute_messages(client):
             logger.error(f"🔥 Xato: {str(e)}")
             await asyncio.sleep(300)
 
-async def main():
-    client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+async def send_message(client, group):
+    """Xabar yuborish"""
     try:
-        await client.start()
-        logger.info("✅ Tizimga ulandi!")
-        await distribute_messages(client)
+        if group['id'] in failed_groups:
+            logger.info(f"⏩ {group['name']} guruhiga avval tarqatib bo'lmagan, o'tkazib yuborildi")
+            return False
+            
+        message = random.choice(MESSAGES)
+        await client.send_message(group['entity'], message)
+        logger.info(f"✉️ {group['name']} ga xabar yuborildi")
+        processed_groups.add(group['id'])  # Tarqatib bo'lingan guruhga qo'shish
+        stats["messages_sent"] += 1
+        return True
+    except errors.ChatWriteForbiddenError:
+        logger.warning(f"❌ {group['name']} ga yozish taqiqlangan")
+        failed_groups.add(group['id'])
+        stats["errors"] += 1
+        return False
+    except errors.FloodWaitError as e:
+        logger.warning(f"⏳ Flood kutish: {e.seconds} soniya")
+        await asyncio.sleep(e.seconds)
+        return False
+    except errors.RPCError as e:
+        if "SPAM" in str(e):
+            logger.warning("🛑 Spam bloki aniqlandi, SpamBot ga murojaat qilinmoqda...")
+            if await handle_spam_block(client):
+                return await send_message(client, group)
+        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}")
+        stats["errors"] += 1
+        return False
+
+async def handle_spam_block(client):
+    """Spam blokini hal qilish"""
+    try:
+        spam_bot = await client.get_entity("SpamBot")
+        
+        # 1-chi /start
+        await client.send_message(spam_bot, "/start")
+        await asyncio.sleep(5)
+        
+        # 2-chi /start
+        await client.send_message(spam_bot, "/start")
+        await asyncio.sleep(5)
+        
+        # Javobni tekshirish
+        messages = await client.get_messages(spam_bot, limit=1)
+        if messages and "CAPTCHA" in messages[0].text:
+            logger.warning("⚠️ Iltimos CAPTCHA ni qo'lda hal qiling!")
+            return False
+        return True
+        
     except Exception as e:
-        logger.error(f"⚠️ Kirish xatosi: {str(e)}")
-    finally:
-        await client.disconnect()
+        logger.error(f"SpamBot xatosi: {str(e)}")
+        return False
 
 if __name__ == "__main__":
     asyncio.run(main())
