@@ -66,7 +66,7 @@ async def get_all_groups(client):
                     logger.info(f"✅ {dialog.name} qo'shildi")
                     
             except Exception as e:
-                logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}")
+                logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}", exc_info=True)
     return groups
 
 async def handle_spam_block(client):
@@ -91,7 +91,7 @@ async def handle_spam_block(client):
         return True
         
     except Exception as e:
-        logger.error(f"SpamBot xatosi: {str(e)}")
+        logger.error(f"SpamBot xatosi: {str(e)}", exc_info=True)
         return False
 
 async def send_message(client, group):
@@ -121,8 +121,12 @@ async def send_message(client, group):
             logger.warning("🛑 Spam bloki aniqlandi, SpamBot ga murojaat qilinmoqda...")
             if await handle_spam_block(client):
                 return await send_message(client, group)
-        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}")
+        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}", exc_info=True)
         stats["errors"] += 1
+        return False
+    except errors.ConnectionError as e:
+        logger.error(f"⚠️ Ulanish xatosi: {str(e)}", exc_info=True)
+        await asyncio.sleep(60)  # 1 daqiqa kutish va qayta urinish
         return False
 
 async def distribute_messages(client):
@@ -130,6 +134,10 @@ async def distribute_messages(client):
     global groups
     while True:
         try:
+            if not client.is_connected():
+                logger.warning("Ulanish uzilgan, qayta ulanmoqda...")
+                await client.connect()
+            
             logger.info(f"\n🔄 Yangi aylanish ({datetime.now().strftime('%H:%M')})")
             
             # Guruhlarni yangilash
@@ -170,7 +178,7 @@ async def distribute_messages(client):
             await client.disconnect()
             sys.exit()
         except Exception as e:
-            logger.error(f"🔥 Xato: {str(e)}")
+            logger.error(f"🔥 Xato: {str(e)}", exc_info=True)
             await asyncio.sleep(300)
 
 async def main():
@@ -179,10 +187,13 @@ async def main():
         await client.start()
         logger.info("✅ Tizimga ulandi!")
         await distribute_messages(client)
+    except errors.ConnectionError as e:
+        logger.error(f"⚠️ Ulanish xatosi: {str(e)}", exc_info=True)
+        await asyncio.sleep(60)  # 1 daqiqa kutish va qayta urinish
     except Exception as e:
-        logger.error(f"⚠️ Kirish xatosi: {str(e)}")
+        logger.error(f"⚠️ Kirish xatosi: {str(e)}", exc_info=True)
     finally:
         await client.disconnect()
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())
