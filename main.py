@@ -63,8 +63,10 @@ async def get_all_groups(client):
                 if can_send:
                     # Adminlarni olish
                     if isinstance(chat, InputPeerChannel):
+                        # Kanal yoki katta guruh uchun GetFullChannelRequest
                         full_chat = await client(GetFullChannelRequest(chat))
                     else:
+                        # Oddiy guruh uchun GetFullChatRequest
                         full_chat = await client(GetFullChatRequest(chat.id))
                     
                     admins = []
