@@ -1,11 +1,10 @@
 from telethon import TelegramClient, errors
-from telethon.tl.types import InputPeerChannel
+from telethon.tl.types import InputPeerChannel, InputPeerChat
 import asyncio
 import random
 from datetime import datetime, timedelta
 import sys
 import logging
-import os
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -19,10 +18,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Konfiguratsiya
-API_ID = 21135417  # O'z API_ID ni kiriting
-API_HASH = '40963f632be1f4349a528780bf5393f2'  # O'z API_HASH ni kiriting
-SESSION_NAME = 'userbot.session'  # Session fayli nomi
-INTERVAL_HOURS = 1  # Xabarlarni tarqatish oralig'i (soatda)
+API_ID = 21135417
+API_HASH = '40963f632be1f4349a528780bf5393f2'
+SESSION_NAME = 'userbot.session'
+INTERVAL_HOURS = 1
 
 # Xabarlar ro'yxati
 MESSAGES = [
@@ -67,7 +66,7 @@ async def get_all_groups(client):
                     logger.info(f"✅ {dialog.name} qo'shildi")
                     
             except Exception as e:
-                logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}", exc_info=True)
+                logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}")
     return groups
 
 async def handle_spam_block(client):
@@ -92,7 +91,7 @@ async def handle_spam_block(client):
         return True
         
     except Exception as e:
-        logger.error(f"SpamBot xatosi: {str(e)}", exc_info=True)
+        logger.error(f"SpamBot xatosi: {str(e)}")
         return False
 
 async def send_message(client, group):
@@ -119,15 +118,10 @@ async def send_message(client, group):
         return False
     except errors.RPCError as e:
         if "SPAM" in str(e):
-            logger.warning("🛑 Spam bloki aniqlandi, SpamBot ga murojaat qilinmoqda...")
             if await handle_spam_block(client):
                 return await send_message(client, group)
-        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}", exc_info=True)
+        logger.error(f"⚠️ {group['name']} - Xato: {str(e)}")
         stats["errors"] += 1
-        return False
-    except errors.ConnectionError as e:
-        logger.error(f"⚠️ Ulanish xatosi: {str(e)}", exc_info=True)
-        await asyncio.sleep(60)  # 1 daqiqa kutish va qayta urinish
         return False
 
 async def distribute_messages(client):
@@ -135,11 +129,10 @@ async def distribute_messages(client):
     global groups
     while True:
         try:
-            if not client.is_connected():
-                logger.warning("Ulanish uzilgan, qayta ulanmoqda...")
-                await client.connect()
-            
             logger.info(f"\n🔄 Yangi aylanish ({datetime.now().strftime('%H:%M')})")
+            
+            # SpamBotga start bosish
+            await handle_spam_block(client)
             
             # Guruhlarni yangilash
             groups = await get_all_groups(client)
@@ -179,24 +172,17 @@ async def distribute_messages(client):
             await client.disconnect()
             sys.exit()
         except Exception as e:
-            logger.error(f"🔥 Xato: {str(e)}", exc_info=True)
+            logger.error(f"🔥 Xato: {str(e)}")
             await asyncio.sleep(300)
 
 async def main():
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
     try:
-        # Telefon raqamini yoki bot tokenini to'g'ridan-to'g'ri kiritish
-        await client.start(phone="+998901234567")  # Telefon raqamini o'zgartiring
-        # Yoki bot tokenidan foydalanish:
-        # await client.start(bot_token="123456789:ABCdefGhIJKlmNoPQRstuVWXyz")
-        
+        await client.start()
         logger.info("✅ Tizimga ulandi!")
         await distribute_messages(client)
-    except errors.ConnectionError as e:
-        logger.error(f"⚠️ Ulanish xatosi: {str(e)}", exc_info=True)
-        await asyncio.sleep(60)  # 1 daqiqa kutish va qayta urinish
     except Exception as e:
-        logger.error(f"⚠️ Kirish xatosi: {str(e)}", exc_info=True)
+        logger.error(f"⚠️ Kirish xatosi: {str(e)}")
     finally:
         await client.disconnect()
 
