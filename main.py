@@ -1,5 +1,7 @@
 from telethon import TelegramClient, errors
-from telethon.tl.types import InputPeerChannel
+from telethon.tl.types import InputPeerChannel, InputPeerUser, PeerUser
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.messages import GetFullChatRequest
 import asyncio
 import random
 from datetime import datetime, timedelta
@@ -33,6 +35,7 @@ MESSAGES = [
 groups = []
 processed_groups = set()  # Tarqatib bo'lingan guruhlar
 failed_groups = set()     # Tarqatib bo'lmagan guruhlar
+processed_admins = set()  # Xabar yuborilgan adminlar
 
 # Statistika
 stats = {
@@ -43,7 +46,7 @@ stats = {
 }
 
 async def get_all_groups(client):
-    """Barcha guruhlarni olish"""
+    """Barcha guruhlarni va adminlarni olish"""
     global groups
     groups = []
     async for dialog in client.iter_dialogs():
@@ -58,12 +61,24 @@ async def get_all_groups(client):
                     can_send = not chat.restricted
                 
                 if can_send:
+                    # Adminlarni olish
+                    if isinstance(chat, InputPeerChannel):
+                        full_chat = await client(GetFullChannelRequest(chat))
+                    else:
+                        full_chat = await client(GetFullChatRequest(chat.id))
+                    
+                    admins = []
+                    for participant in full_chat.full_chat.participants:
+                        if participant.is_admin:
+                            admins.append(participant.user_id)
+                    
                     groups.append({
                         'id': dialog.id,
                         'name': dialog.name,
-                        'entity': chat
+                        'entity': chat,
+                        'admins': admins
                     })
-                    logger.info(f"✅ {dialog.name} qo'shildi")
+                    logger.info(f"✅ {dialog.name} qo'shildi (Adminlar: {len(admins)})")
                     
             except Exception as e:
                 logger.error(f"⚠️ {dialog.name} - Xato: {str(e)}")
@@ -106,6 +121,20 @@ async def send_message(client, group):
         logger.info(f"✉️ {group['name']} ga xabar yuborildi")
         processed_groups.add(group['id'])  # Tarqatib bo'lingan guruhga qo'shish
         stats["messages_sent"] += 1
+        
+        # Yangi adminlarga xabar yuborish
+        for admin_id in group['admins']:
+            if admin_id not in processed_admins:  # Faqat yangi adminlarga
+                try:
+                    admin = await client.get_entity(PeerUser(admin_id))
+                    if not admin.bot:  # Botlarga xabar yozmaslik
+                        await client.send_message(admin, message)
+                        logger.info(f"👤 {group['name']} guruhining yangi adminiga xabar yuborildi: {admin_id}")
+                        processed_admins.add(admin_id)  # Xabar yuborilgan adminni saqlash
+                        await asyncio.sleep(random.randint(10, 15))  # 10-15 soniya kutish
+                except Exception as e:
+                    logger.error(f"⚠️ Admin {admin_id} ga xabar yuborishda xato: {str(e)}")
+        
         return True
     except errors.ChatWriteForbiddenError:
         logger.warning(f"❌ {group['name']} ga yozish taqiqlangan")
