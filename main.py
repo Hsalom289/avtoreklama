@@ -5,6 +5,7 @@ import random
 from datetime import datetime, timedelta
 import sys
 import logging
+import os
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -184,7 +185,11 @@ async def distribute_messages(client):
 async def main():
     client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
     try:
-        await client.start()
+        # Telefon raqamini yoki bot tokenini to'g'ridan-to'g'ri kiritish
+        await client.start(phone="+998901234567")  # Telefon raqamini o'zgartiring
+        # Yoki bot tokenidan foydalanish:
+        # await client.start(bot_token="123456789:ABCdefGhIJKlmNoPQRstuVWXyz")
+        
         logger.info("✅ Tizimga ulandi!")
         await distribute_messages(client)
     except errors.ConnectionError as e:
